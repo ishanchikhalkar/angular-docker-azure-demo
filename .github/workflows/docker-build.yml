@@ -1,53 +1,99 @@
-name: Build and Deploy
+name: Angular Docker CI
 
 on:
   push:
     branches:
       - main
 
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
 
-  build:
+  # ==========================================
+  # BUILD + TEST + DOCKER + PUSH TO ACR
+  # ==========================================
+  docker-build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+
+      # 1. Checkout code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Login to Azure
+      # 2. Setup Node.js
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: npm ci
+
+      # 4. Build Angular application
+      - name: Build Angular
+        run: npm run build
+
+      # 5. Run tests
+      - name: Run Angular tests
+        run: npm test -- --watch=false --no-progress --browsers=ChromeHeadless
+
+      # 6. Login to Azure using OIDC
+      - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # 7. Login to Azure Container Registry
       - name: Login to ACR
-        run: |
-          az acr login --name ${{ secrets.ACR_NAME }}
+        run: az acr login --name angulardockerdemoacr
 
-      - name: Build Docker Image
+      # 8. Build Docker image
+      - name: Build Docker image
         run: |
-          docker build -t ${{ secrets.ACR_NAME }}.azurecr.io/angular-docker-azure-demo:${{ github.sha }} .
+          docker build \
+            -t angulardockerdemoacr.azurecr.io/angular-docker-azure-demo:${{ github.sha }} \
+            -t angulardockerdemoacr.azurecr.io/angular-docker-azure-demo:latest \
+            .
 
-      - name: Push Docker Image
+      # 9. Push Docker image to ACR
+      - name: Push Docker image
         run: |
-          docker push ${{ secrets.ACR_NAME }}.azurecr.io/angular-docker-azure-demo:${{ github.sha }}
+          docker push angulardockerdemoacr.azurecr.io/angular-docker-azure-demo:${{ github.sha }}
+          docker push angulardockerdemoacr.azurecr.io/angular-docker-azure-demo:latest
 
+
+  # ==========================================
+  # DEPLOY TO AZURE
+  # ==========================================
   deploy:
-    needs: build
+    needs: docker-build
     runs-on: ubuntu-latest
 
     environment:
       name: production
 
     steps:
-      - name: Login to Azure
+
+      # 10. Login to Azure
+      - name: Azure Login
         uses: azure/login@v2
         with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      # 11. Deploy Docker image to App Service
       - name: Deploy to Azure App Service
         run: |
           az webapp config container set \
             --name ${{ secrets.APP_SERVICE_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --container-image-name ${{ secrets.ACR_NAME }}.azurecr.io/angular-docker-azure-demo:${{ github.sha }} \
-            --container-registry-url https://${{ secrets.ACR_NAME }}.azurecr.io
+            --container-image-name angulardockerdemoacr.azurecr.io/angular-docker-azure-demo:${{ github.sha }} \
+            --container-registry-url https://angulardockerdemoacr.azurecr.io
