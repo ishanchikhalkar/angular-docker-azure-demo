@@ -13,9 +13,6 @@ jobs:
   docker-build:
     runs-on: ubuntu-latest
 
-    environment:
-      name: production
-
     steps:
       # 1. Checkout code
       - name: Checkout code
